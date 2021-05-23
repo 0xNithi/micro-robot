@@ -1,4 +1,3 @@
-import controller
+from controller import *
 
-controller.init()
-controller.run()
+controller().run()
