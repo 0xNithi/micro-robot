@@ -16,7 +16,6 @@ class controller:
 
         logging.basicConfig(filename=filename, filemode="a",
                             format="%(asctime)s - %(levelname)s | %(message)s", level=logging.DEBUG)
-        logging.getLogger().addHandler(logging.StreamHandler().setFormatter(logging.BASIC_FORMAT))
         logging.info("starting initialization")
 
         # Init serial port
@@ -62,10 +61,10 @@ class controller:
 
     def goto(self, to, From):
         if to == "redStation" and From == "greenStaion":
-            self.send("CMD:MLT:40:120")
-            self.sendAndWait(["CMD:MBT:40:60", "GET:DC_ISIDLE"], "1\r\n")
-            self.moveCenter()
-            self.send("CMD:MFT:40:65")
+            #self.send("CMD:MLT:30:120")
+            #self.sendAndWait(["CMD:MBT:30:60", "GET:DC_ISIDLE"], "1\r\n")
+            #self.moveCenter()
+            self.rotateCenter()
 
     def moveCenter(self):
         isCenter = False
@@ -78,12 +77,50 @@ class controller:
             print('[VECTOR: INDEX=%d X0=%d Y0=%d X1=%d Y1=%d]' % (
                 vectors[0].m_index, vectors[0].m_x0, vectors[0].m_y0, vectors[0].m_x1, vectors[0].m_y1))
 
-            if abs(deltaX) >= 0 and abs(deltaX) <= 1:
+            if abs(deltaX) == 0:
                 isCenter = True
             elif deltaX < 0:
-                self.send("CMD:MRT:40:1:RLS")
+                self.send("CMD:MRT:30:0.5:RLS")
             else:
-                self.send("CMD:MLT:40:1:RLS")
+                self.send("CMD:MLT:30:0.5:RLS")
+                
+    def rotateCenter(self):
+        intersections = IntersectionArray(1)
+        
+        while True:
+        #    self.send("CMD:MFC:15")
+            line_get_all_features()
+            line_get_intersections(1, intersections)
+            print('[INTERSECTION: X=%d Y=%d BRANCHES=%d]' % (intersections[0].m_x, intersections[0].m_y, intersections[0].m_n))
+            if intersections[0].m_y >= 15 and intersections[0].m_n >= 3:
+                self.send("CMD:STP")
+        #        self.send("CMD:MBT:30:5")
+                for lineIndex in range (0, intersections[0].m_n):
+                    print('  [LINE: INDEX=%d ANGLE=%d]' % (intersections[0].getLineIndex(lineIndex), intersections[0].getLineAngle(lineIndex)))
+                break
+        
+        while True:
+            lineAngle = []
+            index = 0
+            while True:
+                line_get_all_features()
+                line_get_intersections(1, intersections)
+                print('[INTERSECTION: X=%d Y=%d BRANCHES=%d]' % (intersections[0].m_x, intersections[0].m_y, intersections[0].m_n))
+                if intersections[0].m_n == 4:
+                    for lineIndex in range(0, 4):
+                        lineAngle.append(abs(intersections[0].getLineAngle(lineIndex)))
+                        print('  [LINE: INDEX=%d ANGLE=%d]' % (intersections[0].getLineIndex(lineIndex), intersections[0].getLineAngle(lineIndex)))
+                    lineAngle.sort()
+                    break
+            for lineIndex in range(0, 4):
+                if lineAngle[1] == abs(intersections[0].getLineAngle(lineIndex)):
+                    index = lineIndex
+            if abs(intersections[0].getLineAngle(index)) <= 1:
+                break
+            elif intersections[0].getLineAngle(index) < 1:
+                self.send("CMD:RLT:30:1:RLS")
+            else:
+                self.send("CMD:RRT:30:1:RLS")
 
     def send(self, cmd):
         self.ser.write((cmd).encode())
