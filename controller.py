@@ -52,13 +52,29 @@ class controller:
     def run(self):
         while True:
             if self.ser.is_open:
-                self.goto("redStation", "greenStaion")
+                #self.goto("redStation", "greenStaion")
+                self.cam.set_lamp(1, 1)
+                blocks = BlockArray(7)
+                while True:
+                    count = self.cam.ccc_get_blocks (7, blocks)
+                    print('[BLOCK: SIG=%d X=%3d Y=%3d WIDTH=%3d HEIGHT=%3d]' % (blocks[0].m_signature, blocks[0].m_x, blocks[0].m_y, blocks[0].m_width, blocks[0].m_height))
+                    if abs(125 - blocks[0].m_x) <= 1:
+                        break
+                    elif blocks[0].m_x > 125:
+                        self.send("CMD:MRT:30:0.5:RLS")
+                    else:
+                        self.send("CMD:MLT:30:0.5:RLS")
+                self.send("CMD:MFC:20")
+                while True:
+                    count = self.cam.ccc_get_blocks (7, blocks)
+                    if blocks[0].m_width * blocks[0].m_height >= 24000:
+                        break
                 break
 
     def goto(self, to, From):
         if to == "redStation" and From == "greenStaion":
             self.send("CMD:MLT:30:120")
-            self.sendAndWait(["CMD:MBT:30:60", "GET:DC_ISIDLE"], "1\r\n")
+            self.sendAndWait(["CMD:MBT:30:50", "GET:DC_ISIDLE"], "1\r\n")
         elif to == "blueStation" and From == "redStation":
             self.send("CMD:MBT:30:60")
             self.sendAndWait(["CMD:MLT:30:120", "GET:DC_ISIDLE"], "1\r\n")
@@ -77,6 +93,8 @@ class controller:
             line_get_main_features()
             line_get_vectors(1, vectors)
             deltaX = vectors[0].m_x1 - vectors[0].m_x0
+            
+            print(f"x0:{vectors[0].m_x0} x1:{vectors[0].m_x1} deltaX:{deltaX}")
 
             # Move it left or right until the line is centered on the camera
             if abs(deltaX) == 0:
@@ -91,7 +109,7 @@ class controller:
         vectors = VectorArray(4)
         isFound = False
 
-        self.send("CMD:MFC:15")
+        self.send("CMD:MFC:20")
 
         # Find an intersection
         while not isFound:
@@ -101,24 +119,49 @@ class controller:
             # If an intersection is found, stop the motor
             if intersections[0].m_y >= 15 and intersections[0].m_n >= 3:
                 self.send("CMD:STP")
-                self.send("CMD:MBT:30:5")       # Move back for analyze intersection branches
+                self.sendAndWait(["CMD:MBT:30:10", "GET:DC_ISIDLE"], "1\r\n")
+                #self.send("CMD:MBT:30:10")       # Move back for analyze intersection branches
                 isFound = True
 
         isCenter = False
 
         while not isCenter:
+            minX = 99
+            maxX = -1
+            y0 = 0
+            y1 = 0
             isFound = False
+            
             # Get an intersection
             while not isFound:
                 line_get_all_features()
                 line_get_intersections(1, intersections)
-                line_get_vectors(4, vectors)
+                v_count = line_get_vectors(4, vectors)
                 print('[INTERSECTION: X=%d Y=%d BRANCHES=%d]' % (
                     intersections[0].m_x, intersections[0].m_y, intersections[0].m_n))
-                if intersections[0].m_n == 4:
+            
+                if intersections[0].m_n >= 3:
+                    for lineIndex in range (0, intersections[0].m_n):
+                        print('  [LINE: INDEX=%d ANGLE=%d]' % (intersections[0].getLineIndex(lineIndex), intersections[0].getLineAngle(lineIndex)))
+                    for index in range (0, v_count):
+                        if minX > vectors[index].m_x0:
+                            minX = vectors[index].m_x0
+                            y0 = vectors[index].m_y0
+                        if minX > vectors[index].m_x1:
+                            minX = vectors[index].m_x1
+                            y0 = vectors[index].m_y1
+                        if maxX < vectors[index].m_x0:
+                            maxX = vectors[index].m_x0
+                            y1 = vectors[index].m_y0
+                        if maxX < vectors[index].m_x1:
+                            maxX = vectors[index].m_x1
+                            y1 = vectors[index].m_y1
+                        print('[VECTOR: INDEX=%d X0=%d Y0=%d X1=%d Y1=%d]' % (vectors[index].m_index, vectors[index].m_x0, vectors[index].m_y0, vectors[index].m_x1, vectors[index].m_y1))
                     isFound = True
 
-            deltaY = vectors[2].m_y0 - vectors[3].m_y1
+            deltaY = y0 - y1
+            print(f"y0:{y0} y1:{y1} deltaY:{deltaY}")
+            
             if deltaY == 0:
                 isCenter = True
             elif deltaY > 0:
@@ -155,3 +198,19 @@ class Vector(Structure):
         ("m_y1", c_uint),
         ("m_index", c_uint),
         ("m_flags", c_uint)]
+    
+class IntersectionLine (Structure):
+  _fields_ = [
+    ("m_index", c_uint),
+    ("m_reserved", c_uint),
+    ("m_angle", c_uint) ]
+  
+class Blocks (Structure):
+  _fields_ = [ ("m_signature", c_uint),
+    ("m_x", c_uint),
+    ("m_y", c_uint),
+    ("m_width", c_uint),
+    ("m_height", c_uint),
+    ("m_angle", c_uint),
+    ("m_index", c_uint),
+    ("m_age", c_uint) ]
