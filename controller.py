@@ -1,5 +1,6 @@
 import sys
 import time
+import math
 import logging
 import serial
 import pixy
@@ -52,29 +53,61 @@ class controller:
     def run(self):
         while True:
             if self.ser.is_open:
-                #self.goto("redStation", "greenStaion")
-                self.cam.set_lamp(1, 1)
-                blocks = BlockArray(7)
+                self.goto("redStation", "greenStaion")
                 while True:
-                    count = self.cam.ccc_get_blocks (7, blocks)
-                    print('[BLOCK: SIG=%d X=%3d Y=%3d WIDTH=%3d HEIGHT=%3d]' % (blocks[0].m_signature, blocks[0].m_x, blocks[0].m_y, blocks[0].m_width, blocks[0].m_height))
-                    if abs(125 - blocks[0].m_x) <= 1:
+                    self.moveCenter()
+                    self.rotate()
+                    self.cam.set_lamp(1, 1)
+                    blocks = BlockArray(7)
+                    while True:
+                        count = self.cam.ccc_get_blocks (7, blocks)
+                        print('[BLOCK: SIG=%d X=%3d Y=%3d WIDTH=%3d HEIGHT=%3d]' % (blocks[0].m_signature, blocks[0].m_x, blocks[0].m_y, blocks[0].m_width, blocks[0].m_height))
+                        if count > 0:
+                            r = blocks[0].m_width / blocks[0].m_height - 0.24
+                            #if blocks[0].m_width / blocks[0].m_height >= 1.4:
+                            #    if abs(125 - blocks[0].m_x + blocks[0].m_width / 4) <= 1:
+                            #        break
+                            #    elif blocks[0].m_x + blocks[0].m_width / 4 > 125:
+                            #        self.send("CMD:MRT:30:0.5:RLS")
+                            #    else:
+                            #        self.send("CMD:MLT:30:0.5:RLS")
+                            #else:
+                            offsetX = ((r - 1) * blocks[0].m_height / 2)
+                            newX = math.floor((blocks[0].m_x + offsetX))
+                            print(f"newX:{newX}")
+                            if abs(125 - newX) <= 2:
+                                break
+                            elif newX > 125:
+                                self.send("CMD:MRT:30:0.5:RLS")
+                            else:
+                                self.send("CMD:MLT:30:0.5:RLS")
+                    self.send("CMD:MFC:20")
+                    while True:
+                        count = self.cam.ccc_get_blocks (7, blocks)
+                        #print('[BLOCK: SIG=%d X=%3d Y=%3d WIDTH=%3d HEIGHT=%3d]' % (blocks[0].m_signature, blocks[0].m_x, blocks[0].m_y, blocks[0].m_width, blocks[0].m_height))
+                        r = blocks[0].m_width / blocks[0].m_height / 1.24
+                        offsetX = ((r - 1) * blocks[0].m_height / 2)
+                        newX = math.floor(blocks[0].m_x + offsetX)
+                        #print(f"newX:{blocks[0].m_x + offsetX}")
+                        if count > 0 and blocks[0].m_height * blocks[0].m_height >= 3300 :
+                            self.send("CMD:STP")
+                            break
+                    if newX >= 110 and newX <= 130:
+                        self.send("CMD:KPB")
                         break
-                    elif blocks[0].m_x > 125:
-                        self.send("CMD:MRT:30:0.5:RLS")
                     else:
-                        self.send("CMD:MLT:30:0.5:RLS")
-                self.send("CMD:MFC:20")
-                while True:
-                    count = self.cam.ccc_get_blocks (7, blocks)
-                    if blocks[0].m_width * blocks[0].m_height >= 24000:
-                        break
+                        #self.send("CMD:MBT:30:60")
+                        self.sendAndWait(["CMD:MBT:30:60", "GET:DC_ISIDLE"], "1")
                 break
+            
+    def test(self):
+        while True:
+            self.send(input())
 
     def goto(self, to, From):
         if to == "redStation" and From == "greenStaion":
-            self.send("CMD:MLT:30:120")
-            self.sendAndWait(["CMD:MBT:30:50", "GET:DC_ISIDLE"], "1\r\n")
+            self.send("CMD:MLT:60:110")
+            self.sendAndWait(["CMD:MBT:60:60", "GET:DC_ISIDLE"], "1")
         elif to == "blueStation" and From == "redStation":
             self.send("CMD:MBT:30:60")
             self.sendAndWait(["CMD:MLT:30:120", "GET:DC_ISIDLE"], "1\r\n")
@@ -82,8 +115,6 @@ class controller:
         elif to == "redStation" and From == "blueStation":
             self.sendAndWait(["CMD:MBT:30:180", "GET:DC_ISIDLE"], "1\r\n")
             self.sendAndWait(["CMD:RRT:30:90", "GET:DC_ISIDLE"], "1\r\n")
-        self.moveCenter()
-        self.rotate()
 
     def moveCenter(self):
         isCenter = False
@@ -91,18 +122,19 @@ class controller:
 
         while not isCenter:
             line_get_main_features()
-            line_get_vectors(1, vectors)
+            count_v = line_get_vectors(1, vectors)
             deltaX = vectors[0].m_x1 - vectors[0].m_x0
             
             print(f"x0:{vectors[0].m_x0} x1:{vectors[0].m_x1} deltaX:{deltaX}")
-
-            # Move it left or right until the line is centered on the camera
-            if abs(deltaX) == 0:
-                isCenter = True
-            elif deltaX < 0:
-                self.send("CMD:MRT:30:0.5:RLS")
-            else:
-                self.send("CMD:MLT:30:0.5:RLS")
+            
+            if count_v > 0:
+                # Move it left or right until the line is centered on the camera
+                if abs(deltaX) <= 1:
+                    isCenter = True
+                elif deltaX < 1:
+                    self.send("CMD:MRT:30:0.5:RLS")
+                else:
+                    self.send("CMD:MLT:30:0.5:RLS")
 
     def rotate(self):
         intersections = IntersectionArray(1)
@@ -119,7 +151,7 @@ class controller:
             # If an intersection is found, stop the motor
             if intersections[0].m_y >= 15 and intersections[0].m_n >= 3:
                 self.send("CMD:STP")
-                self.sendAndWait(["CMD:MBT:30:10", "GET:DC_ISIDLE"], "1\r\n")
+                self.sendAndWait(["CMD:MBT:60:10", "GET:DC_ISIDLE"], "1")
                 #self.send("CMD:MBT:30:10")       # Move back for analyze intersection branches
                 isFound = True
 
@@ -162,7 +194,7 @@ class controller:
             deltaY = y0 - y1
             print(f"y0:{y0} y1:{y1} deltaY:{deltaY}")
             
-            if deltaY == 0:
+            if abs(deltaY) <= 1:
                 isCenter = True
             elif deltaY > 0:
                 self.send("CMD:RLT:30:1:RLS")
@@ -174,7 +206,7 @@ class controller:
         logging.info(f"serial: send command {cmd}")
 
         while True:
-            msg = self.ser.read_until().decode("utf-8")
+            msg = self.ser.read_until("\r\n")
             if msg:
                 logging.info(f"serial: recieve message {msg}")
                 return msg
@@ -182,7 +214,7 @@ class controller:
     def sendAndWait(self, cmd, msg):
         self.send(cmd[0])
 
-        while self.send(cmd[1]) != msg:
+        while self.send(cmd[1]).decode()[:-2] != msg:
             pass
 
     def portList(self):
